@@ -68,7 +68,27 @@ jobs:
           Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-debug "Android" build/Aetheria.apk 2>&1 | tail -25
           ls -lh build/Aetheria.apk
 
+      - name: Кадр карты
+        continue-on-error: true
+        run: |
+          mkdir -p build
+          xvfb-run -a Godot_v4.7.2-stable_linux.x86_64 --path . --rendering-driver opengl3 res://scenes/capture.tscn > /tmp/shot.log 2>&1 || \
+          xvfb-run -a Godot_v4.7.2-stable_linux.x86_64 --path . res://scenes/capture.tscn > /tmp/shot.log 2>&1 || true
+          grep -E "SHOT|ERROR|SCRIPT ERROR" /tmp/shot.log | head -12 || true
+          PNG="$(find "$HOME/.local/share/godot/app_userdata" -name shot.png 2>/dev/null | head -1)"
+          if [ -n "$PNG" ]; then cp "$PNG" build/map.png; echo "кадр есть"; ls -lh build/map.png; else echo "кадра нет"; fi
+
+      - name: Сборка мира в логе
+        continue-on-error: true
+        run: |
+          timeout 200 xvfb-run -a Godot_v4.7.2-stable_linux.x86_64 --path . res://scenes/capture.tscn > /tmp/shot2.log 2>&1 || true
+          grep -cE "Completed load" /tmp/shot2.log || true
+          grep -E "SCRIPT ERROR|Parse Error|Nonexistent|Invalid call" /tmp/shot2.log | head -15 || echo "ошибок скриптов нет"
+
       - uses: actions/upload-artifact@v4
         with:
           name: aetheria-apk
-          path: build/Aetheria.apk
+          path: |
+            build/Aetheria.apk
+            build/map.png
+          if-no-files-found: warn

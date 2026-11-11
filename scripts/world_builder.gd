@@ -39,6 +39,7 @@ var _acc: float = 0.5
 
 func _ready() -> void:
 	add_to_group("world")
+	print("AETHERIA BOOT")
 	if Engine.is_editor_hint() and not build_in_editor:
 		return
 	await get_tree().process_frame
