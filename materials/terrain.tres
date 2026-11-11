@@ -1,0 +1,19 @@
+[gd_resource type="ShaderMaterial" load_steps=8 format=3]
+
+[ext_resource type="Shader" path="res://shaders/terrain.gdshader" id="1"]
+[ext_resource type="Texture2D" path="res://assets/textures/t_grass.png" id="2"]
+[ext_resource type="Texture2D" path="res://assets/textures/t_dirt.png" id="3"]
+[ext_resource type="Texture2D" path="res://assets/textures/t_rock.png" id="4"]
+[ext_resource type="Texture2D" path="res://assets/textures/t_sand.png" id="5"]
+[ext_resource type="Texture2D" path="res://assets/textures/cobble.png" id="6"]
+[ext_resource type="Texture2D" path="res://assets/textures/noise_tile.png" id="7"]
+
+[resource]
+resource_name = "terrain"
+shader = ExtResource("1")
+shader_parameter/tex_grass = ExtResource("2")
+shader_parameter/tex_dirt = ExtResource("3")
+shader_parameter/tex_rock = ExtResource("4")
+shader_parameter/tex_sand = ExtResource("5")
+shader_parameter/tex_cobble = ExtResource("6")
+shader_parameter/tex_noise = ExtResource("7")

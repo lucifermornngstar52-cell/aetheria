@@ -1,0 +1,68 @@
+name: Build Aetheria
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Кэш шаблонов экспорта
+        id: cache-templates
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/godot/export_templates
+          key: godot-templates-4.7.2
+
+      - name: Скачать Godot 4.7.2
+        run: |
+          mkdir -p "$HOME/godot"
+          curl -sL -o /tmp/godot.zip "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip"
+          unzip -q -o /tmp/godot.zip -d "$HOME/godot"
+          chmod +x "$HOME/godot/Godot_v4.7.2-stable_linux.x86_64"
+          echo "$HOME/godot" >> $GITHUB_PATH
+
+      - name: Скачать шаблоны экспорта
+        if: steps.cache-templates.outputs.cache-hit != 'true'
+        run: |
+          curl -sL -o /tmp/templates.tpz "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz"
+          mkdir -p /tmp/tpl
+          unzip -q -o /tmp/templates.tpz -d /tmp/tpl
+          mkdir -p "$HOME/.local/share/godot/export_templates"
+          cp -r /tmp/tpl/templates "$HOME/.local/share/godot/export_templates/4.7.2.stable"
+
+      - name: Импорт ресурсов
+        run: |
+          Godot_v4.7.2-stable_linux.x86_64 --headless --path . --import 2>&1 | tail -20 || true
+
+      - name: Дым-тест карты
+        continue-on-error: true
+        run: |
+          timeout 180 Godot_v4.7.2-stable_linux.x86_64 --headless --path . --quit-after 1200 > /tmp/map.log 2>&1 || true
+          echo "=== первые строки:"; head -25 /tmp/map.log || true
+          echo "=== ошибки:"; grep -E "SCRIPT ERROR|Parse Error|Invalid call|Nonexistent|Cannot call|Failed to load" /tmp/map.log | head -30 || echo "ошибок нет"
+          echo "=== строк: $(wc -l < /tmp/map.log)"
+
+      - name: Ключ для подписи
+        run: |
+          keytool -genkeypair -v -keystore "$PWD/debug.keystore" -storepass android \
+            -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 \
+            -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          sed -i "s|keystore/debug=\"\"|keystore/debug=\"$PWD/debug.keystore\"|" export_presets.cfg
+          sed -i 's|keystore/debug_user=""|keystore/debug_user="androiddebugkey"|' export_presets.cfg
+          sed -i 's|keystore/debug_password=""|keystore/debug_password="android"|' export_presets.cfg
+
+      - name: Экспорт APK
+        run: |
+          mkdir -p build
+          Godot_v4.7.2-stable_linux.x86_64 --headless --path . --export-debug "Android" build/Aetheria.apk 2>&1 | tail -25
+          ls -lh build/Aetheria.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aetheria-apk
+          path: build/Aetheria.apk
