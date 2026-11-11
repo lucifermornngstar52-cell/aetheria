@@ -46,6 +46,12 @@ jobs:
           echo "=== первые строки:"; head -25 /tmp/map.log || true
           echo "=== ошибки:"; grep -E "SCRIPT ERROR|Parse Error|Invalid call|Nonexistent|Cannot call|Failed to load" /tmp/map.log | head -30 || echo "ошибок нет"
           echo "=== строк: $(wc -l < /tmp/map.log)"
+          if grep -q "AETHERIA READY" /tmp/map.log; then
+            echo "MAP OK: мир собрался"
+            grep "AETHERIA" /tmp/map.log | head -5
+          else
+            echo "MAP FAIL: мир не собрался"
+          fi
 
       - name: Ключ для подписи
         run: |

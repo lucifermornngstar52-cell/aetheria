@@ -43,6 +43,16 @@ func _ready() -> void:
 		return
 	await get_tree().process_frame
 	build()
+	if not Engine.is_editor_hint() and OS.has_feature("headless"):
+		await get_tree().process_frame
+		print("AETHERIA READY chunks=%d structures=%d heights=%d" % [
+			manifest.get("chunks", []).size(),
+			manifest.get("structures", []).size(),
+			heights.size()
+		])
+		var pl = get_tree().get_first_node_in_group("player")
+		if pl:
+			print("AETHERIA PLAYER y=%.2f" % pl.global_position.y)
 
 
 func build() -> void:
