@@ -113,6 +113,25 @@ func _track_samples(a: Animation, src: Skeleton3D) -> Dictionary:
 	# bone_name -> {times: PackedFloat32Array, quats: Array[Quaternion]}
 	var res := {}
 	for ti in a.get_track_count():
+		if a.track_get_type(ti) == Animation.TYPE_POSITION_3D:
+			var p2: NodePath = a.track_get_path(ti)
+			if p2.get_subname_count() == 0:
+				continue
+			var bn := String(p2.get_subname(0))
+			var bi2 := src.find_bone(bn)
+			if bi2 < 0:
+				continue
+			var tms := []
+			var vals := []
+			for k in a.track_get_key_count(ti):
+				tms.append(a.track_get_key_time(ti, k))
+				var v = a.track_get_key_value(ti, k)
+				if v is Vector3:
+					vals.append(v)
+				else:
+					vals.append(Vector3.ZERO)
+			res["pos_" + str(bi2)] = {"t": tms, "v": vals}
+			continue
 		if a.track_get_type(ti) != Animation.TYPE_ROTATION_3D:
 			continue
 		var path: NodePath = a.track_get_path(ti)
@@ -136,6 +155,34 @@ func _track_samples(a: Animation, src: Skeleton3D) -> Dictionary:
 				quats.append(Quaternion.IDENTITY)
 		res[bi] = {"t": times, "q": quats}
 	return res
+
+
+func _rest_hip_height(sk: Skeleton3D, bone: int) -> float:
+	var acc := Vector3.ZERO
+	var b := bone
+	while b >= 0:
+		acc += sk.get_bone_rest(b).origin
+		b = sk.get_bone_parent(b)
+	return acc.length()
+
+
+func _sample_pos(track: Dictionary, time: float) -> Vector3:
+	var times: Array = track["t"]
+	var vals: Array = track["v"]
+	if times.is_empty():
+		return Vector3.ZERO
+	if time <= float(times[0]):
+		return vals[0]
+	var last := times.size() - 1
+	if time >= float(times[last]):
+		return vals[last]
+	for i in range(1, last + 1):
+		if time <= float(times[i]):
+			var t0 := float(times[i - 1])
+			var t1 := float(times[i])
+			var w: float = 0.0 if t1 - t0 <= 0.0001 else (time - t0) / (t1 - t0)
+			return (vals[i - 1] as Vector3).lerp(vals[i], w)
+	return vals[last]
 
 
 func _sample(track: Dictionary, time: float) -> Quaternion:
@@ -164,66 +211,73 @@ func _retarget(a: Animation, src: Skeleton3D, tgt: Skeleton3D, rest_src: Array, 
 	var length: float = maxf(a.length, 0.05)
 	var steps: int = clampi(int(length * FPS) + 1, 2, 240)
 	var dt: float = length / float(steps - 1)
-	# обход скелета источника в порядке иерархии
-	var order := []
+	var out := Animation.new()
+	out.length = length
+
+	var src_order := []
 	for i in src.get_bone_count():
-		order.append(i)
-	# целевые кости
-	var tgt_bones := {}
-	for i in tgt.get_bone_count():
-		var nm := tgt.get_bone_name(i)
-		tgt_bones[nm] = i
-	# соберём данные: tgt_bone -> массив quat по кадрам
-	var out_tracks := {}
-	var times := PackedFloat32Array()
-	for s in steps:
-		times.append(float(s) * dt)
-	# для каждого кадра считаем мировые повороты источника
+		src_order.append(i)
+
+	var anim_src := {}
+	for key in tracks.keys():
+		if typeof(key) == TYPE_STRING and String(key).begins_with("pos_"):
+			continue
+		anim_src[int(key)] = true
+
+	# соответствие: целевая кость -> кость источника
+	var tgt_to_src := {}
+	for k in MAP.keys():
+		var sb := src.find_bone(String(k))
+		var tb := tgt.find_bone(String(MAP[k]))
+		if sb >= 0 and tb >= 0:
+			tgt_to_src[tb] = sb
+
+	var out_rot := {}
+	var hips_frames: Array = []      # мировое смещение таза источника по кадрам
+	var hips_parent_rot: Array = []  # мировой поворот родителя таза цели по кадрам
+	var pelvis := src.find_bone("pelvis")
+	var hips := tgt.find_bone("Hips")
+	var hips_parent := tgt.get_bone_parent(hips) if hips >= 0 else -1
+	var rest_pelvis_world := _world_pos_rest(src, pelvis)
+
 	for s in steps:
 		var t: float = float(s) * dt
 		var w_src := {}
-		for bi in order:
+		var p_src := {}
+		for bi in src_order:
 			var parent := src.get_bone_parent(bi)
 			var pw: Quaternion = w_src[parent] if w_src.has(parent) else Quaternion.IDENTITY
-			var local: Quaternion = rest_src[bi]
-			if tracks.has(bi):
+			var pp: Vector3 = p_src[parent] if p_src.has(parent) else Vector3.ZERO
+			var local: Quaternion = src.get_bone_rest(bi).basis.get_rotation_quaternion()
+			var tr: Vector3 = src.get_bone_rest(bi).origin
+			if anim_src.has(bi):
 				local = _sample(tracks[bi], t)
-			else:
-				local = src.get_bone_rest(bi).basis.get_rotation_quaternion()
+			var pk := "pos_" + str(bi)
+			if tracks.has(pk):
+				tr = _sample_pos(tracks[pk], t)
 			w_src[bi] = pw * local
-		# мировые "дельты" для смапленных костей
-		var delta := {}   # src bone -> Quaternion
-		for bi in tracks.keys():
-			delta[bi] = w_src[bi] * (rest_src[bi] as Quaternion).inverse()
-		# теперь целевой скелет
+			p_src[bi] = pp + pw * tr
+
 		var w_tgt := {}
 		for ti in tgt.get_bone_count():
-			var nm := tgt.get_bone_name(ti)
 			var parent_t := tgt.get_bone_parent(ti)
 			var pw_t: Quaternion = w_tgt[parent_t] if w_tgt.has(parent_t) else Quaternion.IDENTITY
 			var world: Quaternion = rest_tgt[ti]
-			# найдём источник для этой кости
-			var src_bi := -1
-			for k in MAP.keys():
-				if String(MAP[k]) == nm:
-					var cand := src.find_bone(String(k))
-					if cand >= 0 and delta.has(cand):
-						src_bi = cand
-					break
-			if src_bi >= 0:
-				world = (delta[src_bi] as Quaternion) * (rest_tgt[ti] as Quaternion)
+			if tgt_to_src.has(ti):
+				var sb2: int = tgt_to_src[ti]
+				var delta: Quaternion = w_src[sb2] * (rest_src[sb2] as Quaternion).inverse()
+				world = delta * (rest_tgt[ti] as Quaternion)
+				if not out_rot.has(ti):
+					out_rot[ti] = []
+				(out_rot[ti] as Array).append(pw_t.inverse() * world)
 			w_tgt[ti] = world
-			var local_t: Quaternion = pw_t.inverse() * world
-			if src_bi >= 0:
-				if not out_tracks.has(ti):
-					out_tracks[ti] = []
-				(out_tracks[ti] as Array).append(local_t)
-	# пишем анимацию
-	var out := Animation.new()
-	out.length = length
-	var loop_name := String(a.resource_name).to_lower()
-	for ti in out_tracks.keys():
-		var quats: Array = out_tracks[ti]
+
+		if pelvis >= 0 and hips >= 0:
+			hips_frames.append((p_src[pelvis] as Vector3) - rest_pelvis_world)
+			hips_parent_rot.append(w_tgt[hips_parent] if (hips_parent >= 0 and w_tgt.has(hips_parent)) else Quaternion.IDENTITY)
+
+	for ti in out_rot.keys():
+		var quats: Array = out_rot[ti]
 		if quats.size() < 2:
 			continue
 		var track_idx := out.add_track(Animation.TYPE_ROTATION_3D)
@@ -231,5 +285,34 @@ func _retarget(a: Animation, src: Skeleton3D, tgt: Skeleton3D, rest_src: Array, 
 		out.track_set_interpolation_type(track_idx, Animation.INTERPOLATION_LINEAR)
 		for s in quats.size():
 			out.rotation_track_insert_key(track_idx, float(s) * dt, quats[s])
+
+	# --- смещение таза: тело должно качаться, иначе ноги ходят под стоящим туловищем
+	if pelvis >= 0 and hips >= 0 and hips_frames.size() == steps:
+		var hs: float = _rest_hip_height(src, pelvis)
+		var ht: float = _rest_hip_height(tgt, hips)
+		var k2: float = (ht / hs) if hs > 0.001 else 1.0
+		var rest_tgt_p: Vector3 = tgt.get_bone_rest(hips).origin
+		var pidx := out.add_track(Animation.TYPE_POSITION_3D)
+		out.track_set_path(pidx, NodePath(prefix + ":" + tgt.get_bone_name(hips)))
+		out.track_set_interpolation_type(pidx, Animation.INTERPOLATION_LINEAR)
+		for s in steps:
+			var delta_w: Vector3 = hips_frames[s] * k2
+			var prot: Quaternion = hips_parent_rot[s]
+			out.position_track_insert_key(pidx, float(s) * dt, rest_tgt_p + prot.inverse() * delta_w)
+
 	out.loop_mode = Animation.LOOP_LINEAR
 	return out
+
+
+func _world_pos_rest(sk: Skeleton3D, bone: int) -> Vector3:
+	var pos := Vector3.ZERO
+	var q := Quaternion.IDENTITY
+	var chain := []
+	var b := bone
+	while b >= 0:
+		chain.push_front(b)
+		b = sk.get_bone_parent(b)
+	for i in chain:
+		pos += q * sk.get_bone_rest(i).origin
+		q = q * sk.get_bone_rest(i).basis.get_rotation_quaternion()
+	return pos
