@@ -515,7 +515,10 @@ func _play_once(anim_name: String) -> void:
 	if not anim.has_animation(anim_name):
 		return
 	anim.speed_scale = 1.0
-	anim.play(anim_name, 0.12)
+	var a: Animation = anim.get_animation(anim_name)
+	if a != null:
+		a.loop_mode = Animation.LOOP_NONE
+	anim.play(anim_name, 0.1)
 	_anim_state = anim_name
 
 

@@ -34,7 +34,7 @@ func _initialize() -> void:
 		quit(1)
 		return
 	var rest_tgt := _rest_global(tgt)
-	var prefix := "Skeleton3D"
+	var prefix := _skeleton_path(char_scene, tgt)
 	var lib := AnimationLibrary.new()
 	var total := 0
 	for p in SRC_PATHS:
@@ -57,6 +57,26 @@ func _initialize() -> void:
 	print("BAKE anims=", total)
 	var err := ResourceSaver.save(lib, OUT_PATH)
 	print("BAKE saved err=", err, " -> ", OUT_PATH)
+
+
+func _skeleton_path(root: Node, sk: Skeleton3D) -> String:
+	# путь вида "Male_Base/Skeleton3D" — от корня сцены персонажа (root_node AnimationPlayer = "..")
+	var ap := _find_anim(root)
+	if ap != null:
+		for n in ap.get_animation_list():
+			var a: Animation = ap.get_animation(String(n))
+			for t in a.get_track_count():
+				if a.track_get_type(t) != Animation.TYPE_ROTATION_3D:
+					continue
+				var path: NodePath = a.track_get_path(t)
+				if path.get_subname_count() == 0 or path.get_name_count() == 0:
+					continue
+				var parts := []
+				for i in path.get_name_count():
+					parts.append(String(path.get_name(i)))
+				return "/".join(parts)
+	var rel := String(root.get_path_to(sk))
+	return rel if rel != "" else "Skeleton3D"
 
 
 func _find_skel(n: Node) -> Skeleton3D:
