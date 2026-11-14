@@ -7,6 +7,7 @@ extends Node3D
 signal built
 
 const MANIFEST_PATH := "res://world/world_manifest.json"
+const WORLD_GLB := "res://world/world.glb"
 const MAT_DIR := "res://materials/"
 const MAT_NAMES := ["terrain", "water", "leaf", "plaster", "stone", "wood", "roof", "thatch", "glass", "glass_lit", "metal", "cloth", "cobble", "bark", "rock", "fire", "rune", "cave_dark", "occ"]
 
@@ -18,6 +19,7 @@ const MAT_NAMES := ["terrain", "water", "leaf", "plaster", "stone", "wood", "roo
 @export var build_collision: bool = true
 @export var build_markers: bool = true
 @export var dynamic_grass: bool = true
+@export var glb_world: bool = true   ## новый мир одним GLB (world/world.glb) вместо нарезки на чанки
 
 var manifest: Dictionary = {}
 var heights: PackedFloat32Array = PackedFloat32Array()
@@ -44,7 +46,7 @@ func _ready() -> void:
 		return
 	await get_tree().process_frame
 	build()
-	if not Engine.is_editor_hint() and OS.has_feature("headless"):
+	if not Engine.is_editor_hint() and DisplayServer.get_name() == "headless":
 		await get_tree().process_frame
 		print("AETHERIA READY chunks=%d structures=%d heights=%d" % [
 			manifest.get("chunks", []).size(),
@@ -76,12 +78,15 @@ func build() -> void:
 	grass_mask = FileAccess.get_file_as_bytes(String(manifest.grass_mask))
 	_load_materials()
 	_apply_quality_values()
-	_build_terrain()
-	await get_tree().process_frame
-	_build_structures()
-	await get_tree().process_frame
-	_load_library()
-	_load_instances()
+	if glb_world and ResourceLoader.exists(WORLD_GLB):
+		_build_from_glb()
+	else:
+		_build_terrain()
+		await get_tree().process_frame
+		_build_structures()
+		await get_tree().process_frame
+		_load_library()
+		_load_instances()
 	await get_tree().process_frame
 	if not Engine.is_editor_hint():
 		if build_collision:
@@ -92,7 +97,16 @@ func build() -> void:
 			_build_grass()
 	is_built = true
 	_update_instances(_viewer_pos())
+	if DisplayServer.get_name() == "headless":
+		print("AETHERIA BUILD DONE nodes=%d" % _count_nodes(self))
 	built.emit()
+
+
+func _count_nodes(n: Node, out_acc: Array = [0]) -> int:
+	out_acc[0] = int(out_acc[0]) + 1
+	for c in n.get_children():
+		_count_nodes(c, out_acc)
+	return int(out_acc[0])
 
 
 # ---------------------------------------------------------------- quality
@@ -139,6 +153,21 @@ func _load_materials() -> void:
 			mats[n] = load(path)
 
 
+func _resolve_material(nm: String) -> String:
+	if mats.has(nm):
+		return nm
+	# leaf_sakura -> leaf, bark_pine -> bark, leaf_fern -> leaf, bark_birch -> bark
+	if nm.begins_with("leaf") and mats.has("leaf"):
+		return "leaf"
+	if nm.begins_with("bark") and mats.has("bark"):
+		return "bark"
+	if nm.begins_with("rock") and mats.has("rock"):
+		return "rock"
+	if nm.begins_with("stone") and mats.has("stone"):
+		return "stone"
+	return ""
+
+
 func _meshes_of(n: Node, out: Array = []) -> Array:
 	if n is MeshInstance3D:
 		out.append(n)
@@ -164,8 +193,9 @@ func _apply_materials(root: Node) -> void:
 			continue
 		for i in mesh.get_surface_count():
 			var nm := _surface_material_name(mesh, i)
-			if mats.has(nm):
-				(mi as MeshInstance3D).set_surface_override_material(i, mats[nm])
+			var key := _resolve_material(nm)
+			if key != "":
+				(mi as MeshInstance3D).set_surface_override_material(i, mats[key])
 
 
 # ---------------------------------------------------------------- terrain
@@ -191,6 +221,49 @@ func _build_terrain() -> void:
 			elif nm == "Water":
 				g.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 				_set_range(g, 0.0, 1500.0)
+
+
+func _build_from_glb() -> void:
+	var root := Node3D.new()
+	root.name = "World"
+	add_child(root)
+	var inst: Node = null
+	var ps = ResourceLoader.load(WORLD_GLB)
+	if ps is PackedScene:
+		inst = (ps as PackedScene).instantiate()
+	else:
+		# фолбэк: грузим GLB напрямую, без импорта редактором
+		var doc := GLTFDocument.new()
+		var state := GLTFState.new()
+		var err := doc.append_from_file(WORLD_GLB, state)
+		if err == OK:
+			inst = doc.generate_scene(state)
+		else:
+			push_error("Aetheria: cannot open " + WORLD_GLB + " err=" + str(err))
+	if inst == null:
+		push_error("Aetheria: GLB world not loaded from " + WORLD_GLB)
+		return
+	root.add_child(inst)
+	# материалы и текстуры берём из самой карты — ничего не перекрашиваем
+	_tune_glb_meshes(inst)
+	print("AETHERIA GLB WORLD loaded")
+
+
+func _tune_glb_meshes(root: Node) -> void:
+	for mi in _meshes_of(root):
+		var g := mi as MeshInstance3D
+		if g == null:
+			continue
+		var nm := String(g.name).to_lower()
+		var par := String(g.get_parent().name).to_lower() if g.get_parent() != null else ""
+		if nm.begins_with("water") or par.begins_with("water"):
+			g.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		elif par.begins_with("trees") or par.begins_with("undergrowth"):
+			g.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		elif par.begins_with("rocks"):
+			g.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		else:
+			g.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 
 
 func _build_structures() -> void:
