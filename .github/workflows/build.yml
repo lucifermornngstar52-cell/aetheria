@@ -77,6 +77,10 @@ jobs:
           grep -E "SHOT|ERROR|SCRIPT ERROR" /tmp/shot.log | head -12 || true
           PNG="$(find "$HOME/.local/share/godot/app_userdata" -name shot.png 2>/dev/null | head -1)"
           if [ -n "$PNG" ]; then cp "$PNG" build/map.png; echo "кадр есть"; ls -lh build/map.png; else echo "кадра нет"; fi
+          for extra in shot_attack.png shot_dance.png; do
+            P2="$(find "$HOME/.local/share/godot/app_userdata" -name "$extra" 2>/dev/null | head -1)"
+            if [ -n "$P2" ]; then cp "$P2" "build/$extra"; echo "кадр $extra есть"; fi
+          done
 
       - name: Сборка мира в логе
         continue-on-error: true
@@ -91,4 +95,6 @@ jobs:
           path: |
             build/Aetheria.apk
             build/map.png
+            build/shot_attack.png
+            build/shot_dance.png
           if-no-files-found: warn

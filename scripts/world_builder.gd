@@ -250,6 +250,7 @@ func _build_from_glb() -> void:
 	root.add_child(inst)
 	# материалы и текстуры берём из самой карты — ничего не перекрашиваем
 	_tune_glb_meshes(inst)
+	_batch_vegetation(inst)
 	if castle_enabled:
 		_add_castle(root)
 	print("AETHERIA GLB WORLD loaded")
@@ -276,6 +277,47 @@ func _add_castle(root: Node3D) -> void:
 	m.set_meta("poi_name", "Sky Castle")
 	root.add_child(m)
 	print("AETHERIA CASTLE placed")
+
+
+func _batch_vegetation(root: Node) -> void:
+	# тысячи отдельных деревьев/камней превращаем в MultiMesh — draw calls падают в десятки раз
+	for group_name in ["Trees", "Rocks", "Undergrowth", "Water"]:
+		var g := root.find_child(group_name, true, false)
+		if g == null:
+			continue
+		var buckets := {}
+		for c in g.get_children():
+			if c is MeshInstance3D:
+				var mi := c as MeshInstance3D
+				if mi.mesh == null:
+					continue
+				var key := mi.mesh.get_instance_id()
+				if not buckets.has(key):
+					buckets[key] = {"mesh": mi.mesh, "xf": [], "mat": mi.material_override}
+				(buckets[key]["xf"] as Array).append(mi.global_transform)
+		if buckets.is_empty():
+			continue
+		var total := 0
+		for key in buckets.keys():
+			var b: Dictionary = buckets[key]
+			var xfs: Array = b["xf"]
+			var mm := MultiMesh.new()
+			mm.transform_format = MultiMesh.TRANSFORM_3D
+			mm.mesh = b["mesh"]
+			mm.instance_count = xfs.size()
+			for i in xfs.size():
+				mm.set_instance_transform(i, xfs[i])
+			var mmi := MultiMeshInstance3D.new()
+			mmi.name = String(group_name) + "_batch"
+			mmi.multimesh = mm
+			mmi.material_override = b["mat"]
+			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			g.add_child(mmi)
+			total += xfs.size()
+		for c in g.get_children():
+			if c is MeshInstance3D:
+				c.queue_free()
+		print("AETHERIA BATCH ", group_name, " instances=", total, " batches=", buckets.size())
 
 
 func _tune_glb_meshes(root: Node) -> void:

@@ -16,6 +16,7 @@ var buttons: Array = []
 var map_rect: TextureRect
 var map_marker: ColorRect
 var map_big: bool = false
+var hint: Label = null
 var _acc: float = 0.0
 const JOY_R := 70.0
 
@@ -41,12 +42,38 @@ func _ready() -> void:
 	joy_knob.visible = false
 	ui.add_child(joy_base)
 	ui.add_child(joy_knob)
-	_button("Jump", Vector2(-150, -150), Vector2(120, 120), _on_jump)
-	_button("Run", Vector2(-290, -110), Vector2(110, 80), _on_run)
-	_button("Fly", Vector2(-290, -200), Vector2(110, 70), _on_fly)
-	_button("Map", Vector2(-120, 20), Vector2(100, 60), _on_map)
-	_button("Quality", Vector2(-240, 20), Vector2(110, 60), _on_quality)
-	_button("+2h", Vector2(-350, 20), Vector2(90, 60), _on_time)
+	# ---- боевые и основные кнопки (крупные, справа снизу) ----
+	_button("ПРЫЖОК", Vector2(-330, -150), Vector2(140, 140), _on_jump, 22)
+	_button("МЕЧ", Vector2(-180, -150), Vector2(140, 140), _on_attack, 24)
+	_button("БЕГ", Vector2(-480, -70), Vector2(120, 90), _on_run, 20)
+	_button("ЛАЗАТЬ", Vector2(-480, -175), Vector2(120, 90), _on_climb, 18)
+	_button("СЕСТЬ", Vector2(-480, -280), Vector2(120, 90), _on_sit, 18)
+	# ---- действия ----
+	_button("ТАНЕЦ", Vector2(-330, -300), Vector2(105, 80), _on_dance, 17)
+	_button("КОПАТЬ", Vector2(-180, -300), Vector2(105, 80), _on_chop, 17)
+	_button("МАГИЯ", Vector2(-330, -390), Vector2(105, 80), _on_spell, 17)
+	_button("ПОКЛОН", Vector2(-180, -390), Vector2(105, 80), _on_bow, 17)
+	# ---- служебные ----
+	_button("КАРТА", Vector2(-120, 20), Vector2(100, 60), _on_map, 16)
+	_button("ГРАФИКА", Vector2(-240, 20), Vector2(110, 60), _on_quality, 15)
+	_button("+2 ЧАСА", Vector2(-360, 20), Vector2(110, 60), _on_time, 15)
+	_button("ПОЛЁТ", Vector2(-600, -70), Vector2(110, 90), _on_fly, 16)
+	hint = Label.new()
+	hint.anchor_left = 0.0
+	hint.anchor_top = 1.0
+	hint.anchor_right = 1.0
+	hint.anchor_bottom = 1.0
+	hint.offset_top = -64
+	hint.offset_bottom = -20
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.add_theme_font_size_override("font_size", 18)
+	hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.92))
+	hint.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	hint.add_theme_constant_override("outline_size", 6)
+	hint.text = "Стик влево — идти · справа на экране — камера · ПРЫЖОК, МЕЧ, ЛАЗАТЬ — действия"
+	ui.add_child(hint)
+	if player != null and player.has_signal("action_changed"):
+		player.connect("action_changed", _on_action_hint)
 	map_rect = TextureRect.new()
 	map_rect.texture = load("res://ui/minimap.png")
 	map_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -77,9 +104,10 @@ func _circle(sz: Vector2, col: Color) -> Panel:
 	return p
 
 
-func _button(text: String, off: Vector2, sz: Vector2, cb: Callable) -> void:
+func _button(text: String, off: Vector2, sz: Vector2, cb: Callable, fsize: int = 16) -> void:
 	var b := Button.new()
 	b.text = text
+	b.add_theme_font_size_override("font_size", fsize)
 	b.focus_mode = Control.FOCUS_NONE
 	b.anchor_left = 1.0
 	b.anchor_right = 1.0
@@ -109,17 +137,57 @@ func _layout_map() -> void:
 
 func _on_jump() -> void:
 	if player != null:
-		player.set("want_jump", true)
+		player.call("request_jump")
+
+
+func _on_attack() -> void:
+	if player != null:
+		player.call("do_attack")
+
+
+func _on_climb() -> void:
+	if player != null:
+		player.call("toggle_climb")
+
+
+func _on_sit() -> void:
+	if player != null:
+		player.call("toggle_sit")
+
+
+func _on_dance() -> void:
+	if player != null:
+		player.call("play_emote", "ual/Dance", "Танец")
+
+
+func _on_chop() -> void:
+	if player != null:
+		player.call("play_emote", "ual/TreeChopping", "Рубит дерево")
+
+
+func _on_spell() -> void:
+	if player != null:
+		player.call("play_emote", "ual/Spell_Simple_Shoot", "Заклинание")
+
+
+func _on_bow() -> void:
+	if player != null:
+		player.call("play_emote", "ual/Yes", "Кивает")
+
+
+func _on_action_hint(text: String) -> void:
+	if hint != null:
+		hint.text = text
 
 
 func _on_run() -> void:
 	if player != null:
-		player.set("run", not bool(player.get("run")))
+		player.call("toggle_run")
 
 
 func _on_fly() -> void:
 	if player != null:
-		player.set("fly", not bool(player.get("fly")))
+		player.call("toggle_fly")
 
 
 func _on_map() -> void:
