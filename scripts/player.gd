@@ -8,6 +8,7 @@ class_name AetheriaPlayer
 @export var jump_velocity: float = 8.5
 @export var gravity: float = 24.0
 @export var mouse_sens: float = 0.0035
+const CHAR_SCENE := "res://assets/char/char_male_base.glb"
 
 var move_input: Vector2 = Vector2.ZERO   # set by the HUD joystick (y > 0 = backwards)
 var look_delta: Vector2 = Vector2.ZERO   # radians, set by the HUD touch-look
@@ -22,6 +23,10 @@ var cam: Camera3D
 var model: Node3D
 var world: Node = null
 var _rmb: bool = false
+var anim: AnimationPlayer = null
+var _anim_state: String = ""
+var _idle_anim: String = ""
+var _walk_anim: String = ""
 
 
 func _ready() -> void:
@@ -86,6 +91,86 @@ func _ensure_actions() -> void:
 func _build_model() -> void:
 	model = Node3D.new()
 	add_child(model)
+	# готовая модель персонажа из assets/char, с анимациями Idle/Walk
+	var ps = ResourceLoader.load(CHAR_SCENE)
+	if ps is PackedScene:
+		var ch: Node = (ps as PackedScene).instantiate()
+		model.add_child(ch)
+		_fit_character(ch)
+		anim = ch.find_child("AnimationPlayer", true, false) as AnimationPlayer
+		if anim != null:
+			var names := anim.get_animation_list()
+			print("AETHERIA CHAR anims=", names)
+			_idle_anim = _pick_anim(names, "idle")
+			_walk_anim = _pick_anim(names, "walk")
+			if _walk_anim == "":
+				_walk_anim = _pick_anim(names, "jog")
+			if _walk_anim == "":
+				_walk_anim = _pick_anim(names, "run")
+			print("AETHERIA CHAR idle=", _idle_anim, " walk=", _walk_anim)
+			_play_anim(_idle_anim)
+		return
+
+
+func _pick_anim(names: PackedStringArray, needle: String) -> String:
+	var low := needle.to_lower()
+	for n in names:
+		var s2 := String(n).to_lower()
+		if s2.contains(low) and s2.contains("loop"):
+			return String(n)
+	for n in names:
+		if String(n).to_lower().contains(low):
+			return String(n)
+	return ""
+	_build_placeholder_model()
+
+
+func _fit_character(ch: Node) -> void:
+	# подгоняем рост под 1.75 м и ставим ноги на y=0
+	var aabb := AABB()
+	var first := true
+	for mi in _all_meshes(ch):
+		var g := mi as MeshInstance3D
+		if g.mesh == null:
+			continue
+		var bb: AABB = g.global_transform * g.get_aabb()
+		aabb = bb if first else aabb.merge(bb)
+		first = false
+	if first:
+		return
+	var height: float = maxf(aabb.size.y, 0.001)
+	var k: float = 1.75 / height
+	ch.scale = Vector3(k, k, k)
+	# смещение, чтобы ступни стояли на земле; модель смотрит по -Z
+	var base := Node3D.new()
+	base.name = "FitOffset"
+	var y_off: float = -aabb.position.y * k
+	ch.position = Vector3(-aabb.get_center().x * k, y_off, -aabb.get_center().z * k)
+	ch.rotation.y = PI
+
+
+func _all_meshes(n: Node, out: Array = []) -> Array:
+	if n is MeshInstance3D:
+		out.append(n)
+	for c in n.get_children():
+		_all_meshes(c, out)
+	return out
+
+
+func _play_anim(anim_name: String) -> void:
+	if anim == null or anim_name == "":
+		return
+	if _anim_state == anim_name and anim.is_playing():
+		return
+	_anim_state = anim_name
+	anim.play(anim_name)
+	if anim.current_animation == anim_name:
+		var a: Animation = anim.get_animation(anim_name)
+		if a != null:
+			a.loop_mode = Animation.LOOP_LINEAR
+
+
+func _build_placeholder_model() -> void:
 	var tunic := StandardMaterial3D.new()
 	tunic.albedo_color = Color(0.20, 0.32, 0.62)
 	var skin := StandardMaterial3D.new()
@@ -176,6 +261,14 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 	if dir.length() > 0.1:
 		model.rotation.y = lerp_angle(model.rotation.y, atan2(-dir.x, -dir.z), 12.0 * delta)
+	var horiz: float = Vector2(velocity.x, velocity.z).length()
+	if anim != null:
+		if horiz > 0.6:
+			_play_anim(_walk_anim)
+			anim.speed_scale = clampf(horiz / walk_speed, 0.7, 2.0)
+		else:
+			_play_anim(_idle_anim)
+			anim.speed_scale = 1.0
 	if world != null:
 		var gh: float = world.height_at(global_position.x, global_position.z)
 		if global_position.y < gh - 4.0:

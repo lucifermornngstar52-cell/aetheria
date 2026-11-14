@@ -8,6 +8,7 @@ signal built
 
 const MANIFEST_PATH := "res://world/world_manifest.json"
 const WORLD_GLB := "res://world/world.glb"
+const CASTLE_SCENE := "res://assets/models/castle_v2.glb"
 const MAT_DIR := "res://materials/"
 const MAT_NAMES := ["terrain", "water", "leaf", "plaster", "stone", "wood", "roof", "thatch", "glass", "glass_lit", "metal", "cloth", "cobble", "bark", "rock", "fire", "rune", "cave_dark", "occ"]
 
@@ -20,6 +21,9 @@ const MAT_NAMES := ["terrain", "water", "leaf", "plaster", "stone", "wood", "roo
 @export var build_markers: bool = true
 @export var dynamic_grass: bool = true
 @export var glb_world: bool = true   ## новый мир одним GLB (world/world.glb) вместо нарезки на чанки
+@export var castle_enabled: bool = true
+@export var castle_position := Vector3(-560.0, 141.0, -560.0)
+@export var castle_scale: float = 0.16
 
 var manifest: Dictionary = {}
 var heights: PackedFloat32Array = PackedFloat32Array()
@@ -246,7 +250,32 @@ func _build_from_glb() -> void:
 	root.add_child(inst)
 	# материалы и текстуры берём из самой карты — ничего не перекрашиваем
 	_tune_glb_meshes(inst)
+	if castle_enabled:
+		_add_castle(root)
 	print("AETHERIA GLB WORLD loaded")
+
+
+func _add_castle(root: Node3D) -> void:
+	if not ResourceLoader.exists(CASTLE_SCENE):
+		return
+	var ps = ResourceLoader.load(CASTLE_SCENE)
+	if not (ps is PackedScene):
+		push_warning("Aetheria: castle not loaded")
+		return
+	var c: Node3D = (ps as PackedScene).instantiate()
+	c.name = "SkyCastle"
+	c.position = castle_position
+	c.scale = Vector3.ONE * castle_scale
+	root.add_child(c)
+	var m := Marker3D.new()
+	m.name = "SkyCastlePOI"
+	m.position = castle_position
+	m.add_to_group("poi")
+	m.add_to_group("poi_landmark")
+	m.set_meta("kind", "landmark")
+	m.set_meta("poi_name", "Sky Castle")
+	root.add_child(m)
+	print("AETHERIA CASTLE placed")
 
 
 func _tune_glb_meshes(root: Node) -> void:
