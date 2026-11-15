@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -90,11 +92,21 @@ jobs:
           grep -E "SCRIPT ERROR|Parse Error|Nonexistent|Invalid call" /tmp/shot2.log | head -15 || echo "ошибок скриптов нет"
 
       - uses: actions/upload-artifact@v4
+        continue-on-error: true   # квота артефактов не должна ронять сборку
         with:
           name: aetheria-apk
+          retention-days: 1
           path: |
             build/Aetheria.apk
             build/map.png
             build/shot_attack.png
             build/shot_dance.png
           if-no-files-found: warn
+
+      - name: Релиз с APK (не тратит квоту артефактов)
+        continue-on-error: true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-build
+          name: Aetheria — последняя сборка
+          files: build/Aetheria.apk
