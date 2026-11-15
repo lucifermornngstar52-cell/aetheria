@@ -9,6 +9,11 @@ signal built
 const MANIFEST_PATH := "res://world/world_manifest.json"
 const WORLD_GLB := "res://world/world.glb"
 const CASTLE_SCENE := "res://assets/models/castle_v2.glb"
+
+## LOD деревьев: вблизи полная модель, дальше дешёвый конус-заглушка, ещё дальше не рисуем
+const TREE_NEAR := 190.0
+const TREE_MID := 520.0
+const TREE_LOD_SCALE := 0.58
 const MAT_DIR := "res://materials/"
 const MAT_NAMES := ["terrain", "water", "leaf", "plaster", "stone", "wood", "roof", "thatch", "glass", "glass_lit", "metal", "cloth", "cobble", "bark", "rock", "fire", "rune", "cave_dark", "occ"]
 
@@ -22,6 +27,7 @@ const MAT_NAMES := ["terrain", "water", "leaf", "plaster", "stone", "wood", "roo
 @export var dynamic_grass: bool = true
 @export var glb_world: bool = true   ## новый мир одним GLB (world/world.glb) вместо нарезки на чанки
 @export var castle_enabled: bool = true
+@export var veg_cell: float = 512.0     ## размер клетки для отсечения растительности
 @export var castle_position := Vector3(-560.0, 141.0, -560.0)
 @export var castle_scale: float = 0.16
 
@@ -40,6 +46,7 @@ var is_built: bool = false
 var _range_scale: float = 1.0
 var _density: float = 1.0
 var _ranged: Array = []
+var _veg_batches: Array = []   # [{node, base_end, group}] — дальность прорисовки под качество
 var _acc: float = 0.5
 
 
@@ -100,6 +107,7 @@ func build() -> void:
 		if dynamic_grass:
 			_build_grass()
 	is_built = true
+	_apply_veg_ranges()
 	_update_instances(_viewer_pos())
 	if DisplayServer.get_name() == "headless":
 		print("AETHERIA BUILD DONE nodes=%d" % _count_nodes(self))
@@ -132,6 +140,25 @@ func _apply_quality() -> void:
 	if is_built:
 		_apply_ranges()
 		refresh_instances()
+		_apply_veg_ranges()
+
+
+func _apply_veg_ranges() -> void:
+	for b in _veg_batches:
+		var mi = b["node"]
+		if is_instance_valid(mi):
+			mi.visibility_range_end = float(b["base_end"]) * _range_scale
+			if int(b.get("lod", 0)) == 1:
+				mi.visibility_range_begin = TREE_NEAR * _range_scale
+	var vp := get_viewport()
+	if vp != null:
+		vp.msaa_3d = Viewport.MSAA_DISABLED if quality == 0 else Viewport.MSAA_2X
+	var shadow_size: int = 1024 if quality == 0 else 2048
+	RenderingServer.directional_shadow_atlas_set_size(shadow_size, quality > 0)
+	# на минималках здания не бросают тени — самый дорогой проход
+	for mi in get_tree().get_nodes_in_group("shadow_casters"):
+		if is_instance_valid(mi):
+			(mi as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF if quality == 0 else GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 
 
 func _set_range(mi: GeometryInstance3D, b: float, e: float) -> void:
@@ -280,26 +307,32 @@ func _add_castle(root: Node3D) -> void:
 
 
 func _batch_vegetation(root: Node) -> void:
-	# тысячи отдельных деревьев/камней превращаем в MultiMesh — draw calls падают в десятки раз
-	for group_name in ["Trees", "Rocks", "Undergrowth", "Water"]:
-		var g := root.find_child(group_name, true, false)
+	const GROUP_RANGE := {"Trees": 520.0, "Rocks": 600.0, "Undergrowth": 220.0, "Water": 2600.0}
+	_veg_batches.clear()
+	for group_name in GROUP_RANGE.keys():
+		var g := root.find_child(String(group_name), true, false)
 		if g == null:
 			continue
-		var buckets := {}
+		var is_trees: bool = String(group_name) == "Trees"
+		# --- 1. полные модели по клеткам (вблизи)
+		var cells := {}
 		for c in g.get_children():
-			if c is MeshInstance3D:
-				var mi := c as MeshInstance3D
-				if mi.mesh == null:
-					continue
-				var key := mi.mesh.get_instance_id()
-				if not buckets.has(key):
-					buckets[key] = {"mesh": mi.mesh, "xf": [], "mat": mi.material_override}
-				(buckets[key]["xf"] as Array).append(mi.global_transform)
-		if buckets.is_empty():
-			continue
+			if not (c is MeshInstance3D):
+				continue
+			var mi := c as MeshInstance3D
+			if mi.mesh == null:
+				continue
+			var p: Vector3 = mi.global_position
+			var cx := int(floor((p.x + 1024.0) / veg_cell))
+			var cz := int(floor((p.z + 1024.0) / veg_cell))
+			var key := "%d_%d_%d" % [mi.mesh.get_instance_id(), cx, cz]
+			if not cells.has(key):
+				cells[key] = {"mesh": mi.mesh, "xf": [], "mat": mi.material_override, "cx": cx, "cz": cz}
+			(cells[key]["xf"] as Array).append(mi.global_transform)
+		var made := 0
 		var total := 0
-		for key in buckets.keys():
-			var b: Dictionary = buckets[key]
+		for key in cells.keys():
+			var b: Dictionary = cells[key]
 			var xfs: Array = b["xf"]
 			var mm := MultiMesh.new()
 			mm.transform_format = MultiMesh.TRANSFORM_3D
@@ -308,16 +341,120 @@ func _batch_vegetation(root: Node) -> void:
 			for i in xfs.size():
 				mm.set_instance_transform(i, xfs[i])
 			var mmi := MultiMeshInstance3D.new()
-			mmi.name = String(group_name) + "_batch"
+			mmi.name = "%s_%d_%d" % [String(group_name), int(b["cx"]), int(b["cz"])]
 			mmi.multimesh = mm
 			mmi.material_override = b["mat"]
 			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			var rng: float = float(GROUP_RANGE[String(group_name)])
+			if is_trees:
+				mmi.visibility_range_end = TREE_NEAR * _range_scale
+				mmi.visibility_range_end_margin = 20.0
+			else:
+				mmi.visibility_range_end = rng * _range_scale
+				mmi.visibility_range_end_margin = 40.0
+			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 			g.add_child(mmi)
+			_veg_batches.append({"node": mmi, "base_end": TREE_NEAR if is_trees else rng, "group": String(group_name), "lod": 0})
+			made += 1
 			total += xfs.size()
+		# --- 2. прокси-конусы для дерева вдалеке (одна куча на клетку)
+		if is_trees:
+			var pcell := {}
+			for c in g.get_children():
+				if not (c is MeshInstance3D):
+					continue
+				var mi2 := c as MeshInstance3D
+				if mi2.mesh == null:
+					continue
+				var p2: Vector3 = mi2.global_position
+				var cx2 := int(floor((p2.x + 1024.0) / 128.0))
+				var cz2 := int(floor((p2.z + 1024.0) / 128.0))
+				var key2 := "%d_%d" % [cx2, cz2]
+				if not pcell.has(key2):
+					pcell[key2] = {"cx": cx2, "cz": cz2, "items": []}
+				var aabb: AABB = mi2.mesh.get_aabb()
+				var h: float = clampf(aabb.size.y, 2.0, 40.0)
+				var r: float = clampf(maxf(aabb.size.x, aabb.size.z) * 0.40, 0.4, 8.0)
+				var tint := _avg_tint(String((mi2.material_override as StandardMaterial3D).resource_name) if mi2.material_override is StandardMaterial3D else "")
+				(pcell[key2]["items"] as Array).append({"p": p2, "h": h, "r": r, "c": tint})
+			var proxy_mesh: Mesh = _proxy_mesh()
+			var pmat: Material = _proxy_material(null)
+			var pmade := 0
+			for key2 in pcell.keys():
+				var d: Dictionary = pcell[key2]
+				var items: Array = d["items"]
+				var cnt := 0
+				for it in items:
+					if not (it["p"] as Vector3).is_zero_approx():
+						cnt += 1
+				if cnt == 0:
+					continue
+				var mm2 := MultiMesh.new()
+				mm2.transform_format = MultiMesh.TRANSFORM_3D
+				mm2.use_colors = true
+				mm2.mesh = proxy_mesh
+				mm2.instance_count = cnt
+				var i2 := 0
+				for it in items:
+					var pp: Vector3 = it["p"]
+					var hh: float = float(it["h"])
+					var rr: float = float(it["r"])
+					var xf := Transform3D(Basis().scaled(Vector3(rr, hh, rr)), pp + Vector3(0.0, hh * 0.5, 0.0))
+					mm2.set_instance_transform(i2, xf)
+					mm2.set_instance_color(i2, it["c"])
+					i2 += 1
+				var mmi2 := MultiMeshInstance3D.new()
+				mmi2.name = "Trees_proxy_%d_%d" % [int(d["cx"]), int(d["cz"])]
+				mmi2.multimesh = mm2
+				mmi2.material_override = pmat
+				mmi2.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+				mmi2.visibility_range_begin = TREE_NEAR * _range_scale
+				mmi2.visibility_range_end = TREE_MID * _range_scale
+				mmi2.visibility_range_begin_margin = 20.0
+				mmi2.visibility_range_end_margin = 40.0
+				mmi2.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+				g.add_child(mmi2)
+				_veg_batches.append({"node": mmi2, "base_end": TREE_MID, "group": "Trees", "lod": 1})
+				pmade += 1
+			print("AETHERIA VEG Trees proxies=", pmade)
 		for c in g.get_children():
 			if c is MeshInstance3D:
 				c.queue_free()
-		print("AETHERIA BATCH ", group_name, " instances=", total, " batches=", buckets.size())
+		print("AETHERIA VEG ", group_name, " instances=", total, " batches=", made)
+
+
+func _proxy_mesh() -> Mesh:
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = 0.1
+	cyl.bottom_radius = 1.0
+	cyl.height = 1.0
+	cyl.radial_segments = 4
+	cyl.rings = 1
+	return cyl
+
+
+func _avg_tint(name: String) -> Color:
+	var n := name.to_lower()
+	if n.contains("sakura"):
+		return Color(0.88, 0.64, 0.72)
+	if n.contains("birch"):
+		return Color(0.58, 0.68, 0.44)
+	if n.contains("pine"):
+		return Color(0.16, 0.30, 0.20)
+	if n.contains("autumn"):
+		return Color(0.74, 0.50, 0.22)
+	if n.contains("oak"):
+		return Color(0.28, 0.44, 0.24)
+	return Color(0.26, 0.42, 0.22)
+
+
+func _proxy_material(src: Material) -> Material:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(1, 1, 1)
+	m.vertex_color_use_as_albedo = true
+	m.roughness = 1.0
+	m.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	return m
 
 
 func _tune_glb_meshes(root: Node) -> void:
@@ -333,8 +470,11 @@ func _tune_glb_meshes(root: Node) -> void:
 			g.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		elif par.begins_with("rocks"):
 			g.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		else:
+		elif par.begins_with("structures"):
 			g.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+			g.add_to_group("shadow_casters")
+		else:
+			g.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 
 func _build_structures() -> void:
