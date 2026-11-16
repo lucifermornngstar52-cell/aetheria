@@ -11,6 +11,8 @@ const WORLD_GLB := "res://world/world.glb"
 const CASTLE_SCENE := "res://assets/models/castle_v2.glb"
 
 ## LOD деревьев: вблизи полная модель, дальше дешёвый конус-заглушка, ещё дальше не рисуем
+const TERRAIN_FAR := 1500.0
+const STRUCT_FAR := 820.0
 const TREE_NEAR := 190.0
 const TREE_MID := 520.0
 const TREE_LOD_SCALE := 0.58
@@ -46,6 +48,7 @@ var is_built: bool = false
 var _range_scale: float = 1.0
 var _density: float = 1.0
 var _ranged: Array = []
+var load_progress: float = 0.0
 var _veg_batches: Array = []   # [{node, base_end, group}] — дальность прорисовки под качество
 var _acc: float = 0.5
 
@@ -259,7 +262,7 @@ func _build_from_glb() -> void:
 	root.name = "World"
 	add_child(root)
 	var inst: Node = null
-	var ps = ResourceLoader.load(WORLD_GLB)
+	var ps = await _load_world_async()
 	if ps is PackedScene:
 		inst = (ps as PackedScene).instantiate()
 	else:
@@ -277,6 +280,7 @@ func _build_from_glb() -> void:
 	root.add_child(inst)
 	# материалы и текстуры берём из самой карты — ничего не перекрашиваем
 	_tune_glb_meshes(inst)
+	_apply_stream_ranges(inst)
 	_batch_vegetation(inst)
 	if castle_enabled:
 		_add_castle(root)
@@ -304,6 +308,33 @@ func _add_castle(root: Node3D) -> void:
 	m.set_meta("poi_name", "Sky Castle")
 	root.add_child(m)
 	print("AETHERIA CASTLE placed")
+
+
+func _apply_stream_ranges(root: Node) -> void:
+	# рельеф и постройки проявляются постепенно и не рисуются за горизонтом
+	var terrain := root.find_child("Terrain", true, false)
+	if terrain != null:
+		for c in terrain.get_children():
+			for mi in _meshes_of(c):
+				var g := mi as GeometryInstance3D
+				if g == null:
+					continue
+				g.visibility_range_end = TERRAIN_FAR * _range_scale
+				g.visibility_range_end_margin = 260.0
+				g.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+				_ranged.append([g, 0.0, TERRAIN_FAR])
+	var structs := root.find_child("Structures", true, false)
+	if structs != null:
+		for c in structs.get_children():
+			for mi in _meshes_of(c):
+				var g2 := mi as GeometryInstance3D
+				if g2 == null:
+					continue
+				g2.visibility_range_end = STRUCT_FAR * _range_scale
+				g2.visibility_range_end_margin = 150.0
+				g2.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+				_ranged.append([g2, 0.0, STRUCT_FAR])
+	print("AETHERIA STREAM terrain/structures ranges on")
 
 
 func _batch_vegetation(root: Node) -> void:
@@ -351,7 +382,7 @@ func _batch_vegetation(root: Node) -> void:
 				mmi.visibility_range_end_margin = 20.0
 			else:
 				mmi.visibility_range_end = rng * _range_scale
-				mmi.visibility_range_end_margin = 40.0
+				mmi.visibility_range_end_margin = 60.0
 			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 			g.add_child(mmi)
 			_veg_batches.append({"node": mmi, "base_end": TREE_NEAR if is_trees else rng, "group": String(group_name), "lod": 0})
@@ -455,6 +486,25 @@ func _proxy_material(src: Material) -> Material:
 	m.roughness = 1.0
 	m.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
 	return m
+
+
+func _load_world_async() -> Resource:
+	# грузим мир в отдельном потоке: вместо зависания на старте — прогресс
+	var err := ResourceLoader.load_threaded_request(WORLD_GLB)
+	if err != OK:
+		load_progress = 1.0
+		return ResourceLoader.load(WORLD_GLB)
+	var prog := []
+	while true:
+		var st: int = ResourceLoader.load_threaded_get_status(WORLD_GLB, prog)
+		if st == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+			if prog.size() > 0:
+				load_progress = clampf(float(prog[0]), 0.0, 0.99)
+			await get_tree().process_frame
+			continue
+		break
+	load_progress = 1.0
+	return ResourceLoader.load_threaded_get(WORLD_GLB)
 
 
 func _tune_glb_meshes(root: Node) -> void:

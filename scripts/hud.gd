@@ -17,6 +17,7 @@ var map_rect: TextureRect
 var map_marker: ColorRect
 var map_big: bool = false
 var hint: Label = null
+var load_label: Label = null
 var _acc: float = 0.0
 const JOY_R := 70.0
 
@@ -86,6 +87,22 @@ func _ready() -> void:
 	map_marker.size = Vector2(9, 9)
 	map_marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	ui.add_child(map_marker)
+	load_label = Label.new()
+	load_label.anchor_left = 0.5
+	load_label.anchor_right = 0.5
+	load_label.anchor_top = 0.5
+	load_label.anchor_bottom = 0.5
+	load_label.offset_left = -260
+	load_label.offset_top = -30
+	load_label.offset_right = 260
+	load_label.offset_bottom = 30
+	load_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	load_label.add_theme_font_size_override("font_size", 26)
+	load_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.95))
+	load_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	load_label.add_theme_constant_override("outline_size", 6)
+	load_label.text = "Мир загружается…"
+	ui.add_child(load_label)
 	_layout_map()
 
 
@@ -192,6 +209,22 @@ func _on_fly() -> void:
 
 func _on_map() -> void:
 	map_big = not map_big
+	load_label = Label.new()
+	load_label.anchor_left = 0.5
+	load_label.anchor_right = 0.5
+	load_label.anchor_top = 0.5
+	load_label.anchor_bottom = 0.5
+	load_label.offset_left = -260
+	load_label.offset_top = -30
+	load_label.offset_right = 260
+	load_label.offset_bottom = 30
+	load_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	load_label.add_theme_font_size_override("font_size", 26)
+	load_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.95))
+	load_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	load_label.add_theme_constant_override("outline_size", 6)
+	load_label.text = "Мир загружается…"
+	ui.add_child(load_label)
 	_layout_map()
 
 
@@ -255,6 +288,11 @@ func _input(event: InputEvent) -> void:
 
 
 func _process(delta: float) -> void:
+	if load_label != null:
+		var done: bool = world != null and bool(world.get("is_built"))
+		load_label.visible = not done
+		if not done and world != null:
+			load_label.text = "Мир загружается… %d%%" % int(float(world.get("load_progress")) * 100.0)
 	_acc += delta
 	if player != null and world != null and map_marker != null:
 		var p: Vector3 = (player as Node3D).global_position
