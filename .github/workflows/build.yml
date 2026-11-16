@@ -34,6 +34,10 @@ jobs:
           curl -sL -o /tmp/godot.zip "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip"
           unzip -q -o /tmp/godot.zip -d "$HOME/godot"
           chmod +x "$HOME/godot/Godot_v4.7.2-stable_linux.x86_64"
+
+      - name: PATH для Godot
+        run: |
+          chmod +x "$HOME/godot/Godot_v4.7.2-stable_linux.x86_64" || true
           echo "$HOME/godot" >> $GITHUB_PATH
 
       - name: Скачать шаблоны экспорта
