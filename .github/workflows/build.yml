@@ -20,7 +20,15 @@ jobs:
           path: ~/.local/share/godot/export_templates
           key: godot-templates-4.7.2
 
+      - name: Кэш Godot
+        id: cache-godot
+        uses: actions/cache@v4
+        with:
+          path: ~/godot
+          key: godot-4.7.2-linux
+
       - name: Скачать Godot 4.7.2
+        if: steps.cache-godot.outputs.cache-hit != 'true'
         run: |
           mkdir -p "$HOME/godot"
           curl -sL -o /tmp/godot.zip "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip"
@@ -74,8 +82,8 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p build
-          xvfb-run -a Godot_v4.7.2-stable_linux.x86_64 --path . --rendering-driver opengl3 res://scenes/capture.tscn > /tmp/shot.log 2>&1 || \
-          xvfb-run -a Godot_v4.7.2-stable_linux.x86_64 --path . res://scenes/capture.tscn > /tmp/shot.log 2>&1 || true
+          xvfb-run -a Godot_v4.7.2-stable_linux.x86_64 --path . --rendering-driver opengl3 --resolution 960x540 res://scenes/capture.tscn > /tmp/shot.log 2>&1 || \
+          xvfb-run -a Godot_v4.7.2-stable_linux.x86_64 --path . --resolution 960x540 res://scenes/capture.tscn > /tmp/shot.log 2>&1 || true
           grep -E "SHOT|ERROR|SCRIPT ERROR" /tmp/shot.log | head -12 || true
           PNG="$(find "$HOME/.local/share/godot/app_userdata" -name shot.png 2>/dev/null | head -1)"
           if [ -n "$PNG" ]; then cp "$PNG" build/map.png; echo "кадр есть"; ls -lh build/map.png; else echo "кадра нет"; fi
@@ -83,13 +91,6 @@ jobs:
             P2="$(find "$HOME/.local/share/godot/app_userdata" -name "$extra" 2>/dev/null | head -1)"
             if [ -n "$P2" ]; then cp "$P2" "build/$extra"; echo "кадр $extra есть"; fi
           done
-
-      - name: Сборка мира в логе
-        continue-on-error: true
-        run: |
-          timeout 200 xvfb-run -a Godot_v4.7.2-stable_linux.x86_64 --path . res://scenes/capture.tscn > /tmp/shot2.log 2>&1 || true
-          grep -cE "Completed load" /tmp/shot2.log || true
-          grep -E "SCRIPT ERROR|Parse Error|Nonexistent|Invalid call" /tmp/shot2.log | head -15 || echo "ошибок скриптов нет"
 
       - uses: actions/upload-artifact@v4
         continue-on-error: true   # квота артефактов не должна ронять сборку
