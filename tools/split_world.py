@@ -6,7 +6,7 @@ world/cells/index.json (что где лежит)."""
 import json, struct, os, sys, math
 import numpy as np
 
-SRC = "world/world.glb"
+SRC = sys.argv[1] if len(sys.argv) > 1 else "world/world.glb"
 OUT = "world/cells"
 CELL = 256.0
 HALF = 1024.0
@@ -36,6 +36,16 @@ def accessor(js, bin_data, idx):
         arr = np.zeros((a["count"], nc), dtype=dt)
         for i in range(a["count"]):
             arr[i] = np.frombuffer(bin_data, dtype=dt, count=nc, offset=start + i * stride)
+    if a.get("normalized"):
+        if a["componentType"] == 5121:
+            arr = arr.astype(np.float64) / 255.0
+        elif a["componentType"] == 5123:
+            arr = arr.astype(np.float64) / 65535.0
+        elif a["componentType"] == 5120:
+            arr = np.maximum(arr.astype(np.float64) / 127.0, -1.0)
+        elif a["componentType"] == 5122:
+            arr = np.maximum(arr.astype(np.float64) / 32767.0, -1.0)
+        return arr
     return arr.astype(np.float64) if a["componentType"] == 5126 else arr
 
 def node_matrix(n):
